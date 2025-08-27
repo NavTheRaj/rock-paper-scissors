@@ -5,44 +5,71 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const app = express();
+
+// --- Static assets (client) ---
+app.use(express.static(path.join(__dirname, "public"), {
+  // modest caching for static files
+  maxAge: "1h",
+  etag: true
+}));
+
+// Simple health endpoint for uptime checks
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+
 const server = http.createServer(app);
+
+// Allow setting allowed origins via env, e.g.
+// ORIGIN="https://my-site.netlify.app,https://myapp.com"
+const allowedOrigins = process.env.ORIGIN
+  ? process.env.ORIGIN.split(",").map(s => s.trim())
+  : "*";
+
 const io = new Server(server, {
-  cors: { origin: "*" },
+  cors: { origin: allowedOrigins, methods: ["GET", "POST"] },
+  transports: ["websocket", "polling"],
+  pingInterval: 25000,
+  pingTimeout: 20000,
 });
 
-app.use(express.static(path.join(__dirname, "public")));
-
+// ---- In-memory room store ----
 const rooms = new Map();
 // rooms.set(roomCode, {
-//   players: Map<socketId, {name, ready:boolean}>
-//   moves: Map<socketId, "rock"|"paper"|"scissors">
-//   score: { [socketId]: {wins:0, losses:0, ties:0} }
+//   players: Map<socketId, { name, ready: boolean }>
+//   moves:   Map<socketId, "rock"|"paper"|"scissors">
+//   score:   { [socketId]: { wins:0, losses:0, ties:0 } }
 // });
 
 function computeOutcome(a, b) {
   if (a === b) return "tie";
   if (
-    (a === "rock" && b === "scissors") ||
-    (a === "paper" && b === "rock") ||
+    (a === "rock"     && b === "scissors") ||
+    (a === "paper"    && b === "rock")     ||
     (a === "scissors" && b === "paper")
-  )
-    return "win";
+  ) return "win";
   return "lose";
 }
 
+function roomState(room) {
+  return {
+    players: [...room.players.entries()].map(([id, p]) => ({
+      id, name: p.name, ready: !!p.ready
+    })),
+    scores: room.score
+  };
+}
+
+// ---- Socket handlers ----
 io.on("connection", (socket) => {
   let joinedRoom = null;
 
   socket.on("join_room", ({ roomCode, name }) => {
-    roomCode = String(roomCode || "")
-      .trim()
-      .toUpperCase();
+    roomCode = String(roomCode || "").trim().toUpperCase();
     if (!roomCode) {
       socket.emit("error_msg", "Room code required.");
       return;
     }
 
-    // create or get room
+    // create/get room
     if (!rooms.has(roomCode)) {
       rooms.set(roomCode, { players: new Map(), moves: new Map(), score: {} });
     }
@@ -55,20 +82,22 @@ io.on("connection", (socket) => {
 
     joinedRoom = roomCode;
     socket.join(roomCode);
-    room.players.set(socket.id, { name: name || "Player", ready: false });
-    room.score[socket.id] = room.score[socket.id] || {
-      wins: 0,
-      losses: 0,
-      ties: 0,
-    };
 
-    io.to(roomCode).emit("room_state", {
-      players: [...room.players.entries()].map(([id, p]) => ({
-        id,
-        name: p.name,
-      })),
-      scores: room.score,
-    });
+    room.players.set(socket.id, { name: name || "Player", ready: false });
+    room.score[socket.id] = room.score[socket.id] || { wins: 0, losses: 0, ties: 0 };
+
+    io.to(roomCode).emit("room_state", roomState(room));
+  });
+
+  // Optional: allow renaming after join (not required by UI, but handy)
+  socket.on("rename", (newName) => {
+    if (!joinedRoom) return;
+    const room = rooms.get(joinedRoom);
+    if (!room) return;
+    const p = room.players.get(socket.id);
+    if (!p) return;
+    p.name = String(newName || "Player").slice(0, 40);
+    io.to(joinedRoom).emit("room_state", roomState(room));
   });
 
   socket.on("player_ready", () => {
@@ -78,15 +107,7 @@ io.on("connection", (socket) => {
     const p = room.players.get(socket.id);
     if (!p) return;
     p.ready = true;
-
-    io.to(joinedRoom).emit("room_state", {
-      players: [...room.players.entries()].map(([id, p]) => ({
-        id,
-        name: p.name,
-        ready: p.ready,
-      })),
-      scores: room.score,
-    });
+    io.to(joinedRoom).emit("room_state", roomState(room));
   });
 
   socket.on("make_move", (choice) => {
@@ -97,7 +118,7 @@ io.on("connection", (socket) => {
 
     room.moves.set(socket.id, choice);
 
-    // Wait until both players moved
+    // Wait until both players have moved
     if (room.players.size === 2 && room.moves.size === 2) {
       const [p1, p2] = [...room.players.keys()];
       const m1 = room.moves.get(p1);
@@ -107,18 +128,9 @@ io.on("connection", (socket) => {
       const o2 = computeOutcome(m2, m1);
 
       // Update scores
-      if (o1 === "win") {
-        room.score[p1].wins++;
-        room.score[p2].losses++;
-      }
-      if (o1 === "lose") {
-        room.score[p1].losses++;
-        room.score[p2].wins++;
-      }
-      if (o1 === "tie") {
-        room.score[p1].ties++;
-        room.score[p2].ties++;
-      }
+      if (o1 === "win")  { room.score[p1].wins++;  room.score[p2].losses++; }
+      if (o1 === "lose") { room.score[p1].losses++; room.score[p2].wins++;   }
+      if (o1 === "tie")  { room.score[p1].ties++;   room.score[p2].ties++;   }
 
       io.to(joinedRoom).emit("round_result", {
         moves: { [p1]: m1, [p2]: m2 },
@@ -127,7 +139,7 @@ io.on("connection", (socket) => {
       });
 
       room.moves.clear();
-      // reset ready flags so players click "ready" again (optional)
+      // reset ready flags so players click "ready" again
       for (const [, p] of room.players) p.ready = false;
     } else {
       // Let everyone know who has locked a move (without revealing it)
@@ -142,14 +154,11 @@ io.on("connection", (socket) => {
     for (const pid of Object.keys(room.score)) {
       room.score[pid] = { wins: 0, losses: 0, ties: 0 };
     }
-    io.to(joinedRoom).emit("room_state", {
-      players: [...room.players.entries()].map(([id, p]) => ({
-        id,
-        name: p.name,
-        ready: p.ready,
-      })),
-      scores: room.score,
-    });
+    // keep readiness & moves the same? we'll clear moves + ready for clarity
+    room.moves.clear();
+    for (const [, p] of room.players) p.ready = false;
+
+    io.to(joinedRoom).emit("room_state", roomState(room));
   });
 
   socket.on("disconnect", () => {
@@ -157,7 +166,6 @@ io.on("connection", (socket) => {
     const room = rooms.get(joinedRoom);
     if (!room) return;
 
-    // Clean up
     room.players.delete(socket.id);
     delete room.score[socket.id];
     room.moves.delete(socket.id);
@@ -165,18 +173,12 @@ io.on("connection", (socket) => {
     if (room.players.size === 0) {
       rooms.delete(joinedRoom);
     } else {
-      io.to(joinedRoom).emit("room_state", {
-        players: [...room.players.entries()].map(([id, p]) => ({
-          id,
-          name: p.name,
-          ready: p.ready,
-        })),
-        scores: room.score,
-      });
+      io.to(joinedRoom).emit("room_state", roomState(room));
     }
   });
 });
 
+// ---- Start server ----
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log("RPS realtime server listening on http://localhost:" + PORT);
