@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rock • Paper • Scissors — Realtime</title>
+    <style>
+        :root {
+            --bg: #0e1117;
+            --card: #141a24cc;
+            --text: #e6edf3;
+            --muted: #94a3b8;
+            --win: #22c55e;
+            --lose: #ef4444;
+            --tie: #f59e0b;
+            --accent: #60a5fa;
+            --radius: 16px;
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            font-family: ui-sans-serif, system-ui, Segoe UI, Inter, Roboto;
+            color: var(--text);
+            background: #0e1117;
+            display: grid;
+            min-height: 100dvh;
+            place-items: center;
+            padding: 20px;
+        }
+
+        .wrap {
+            width: min(980px, 100%);
+            display: grid;
+            gap: 16px;
+        }
+
+        header {
+            text-align: center
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: var(--radius);
+            padding: 14px;
+            backdrop-filter: blur(8px)
+        }
+
+        .row {
+            display: grid;
+            gap: 12px
+        }
+
+        .two {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px
+        }
+
+        @media (max-width:760px) {
+            .two {
+                grid-template-columns: 1fr
+            }
+        }
+
+        input,
+        button {
+            font: inherit
+        }
+
+        input {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, .15);
+            background: #0b1320;
+            color: var(--text)
+        }
+
+        button {
+            border: 1px solid rgba(255, 255, 255, .15);
+            background: #0b1320;
+            color: var(--text);
+            padding: 10px 12px;
+            border-radius: 12px;
+            cursor: pointer
+        }
+
+        button:hover {
+            border-color: rgba(255, 255, 255, .3)
+        }
+
+        .choices {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px
+        }
+
+        .choice {
+            font-size: 38px;
+            min-height: 80px
+        }
+
+        .status {
+            font-size: 14px;
+            color: var(--muted)
+        }
+
+        .result {
+            font-weight: 800;
+            text-align: center;
+            padding: 10px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, .1)
+        }
+
+        .result.win {
+            color: var(--win)
+        }
+
+        .result.lose {
+            color: var(--lose)
+        }
+
+        .result.tie {
+            color: var(--tie)
+        }
+
+        .panel {
+            display: grid;
+            gap: 10px
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #0b1320;
+            border: 1px solid rgba(255, 255, 255, .12);
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 13px
+        }
+
+        .flex {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center
+        }
+
+        .grid2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px
+        }
+
+        .hand {
+            font-size: 64px;
+            display: grid;
+            place-items: center;
+            border: 1px dashed rgba(255, 255, 255, .12);
+            border-radius: 14px;
+            min-height: 140px
+        }
+
+        .muted {
+            color: var(--muted)
+        }
+
+        .small {
+            font-size: 12px
+        }
+
+        .danger {
+            border-color: rgba(239, 68, 68, .35) !important
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <header>
+            <h1>Rock • Paper • Scissors — Realtime</h1>
+            <p class="muted small">Share a room code with a friend. When both are ready, make your throws!</p>
+        </header>
+
+        <section class="card">
+            <div class="two">
+                <div class="panel">
+                    <label class="small muted">Room Code</label>
+                    <div class="flex">
+                        <input id="room" placeholder="e.g. OBI123" maxlength="10" />
+                        <button id="btnJoin">Join</button>
+                        <button id="btnGen">Generate</button>
+                    </div>
+                    <label class="small muted">Your Name</label>
+                    <input id="name" placeholder="Your name" />
+                    <div class="status" id="status">Not connected.</div>
+                </div>
+                <div class="panel">
+                    <div><span class="pill">Players</span></div>
+                    <div id="players"></div>
+                    <div class="grid2">
+                        <div>
+                            <div class="small muted">You</div>
+                            <div id="youHand" class="hand">❔</div>
+                        </div>
+                        <div>
+                            <div class="small muted">Opponent</div>
+                            <div id="oppHand" class="hand">❔</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="row">
+                <div class="flex">
+                    <button id="btnReady">I’m Ready</button>
+                    <button id="btnReset" class="danger">Reset Scores</button>
+                </div>
+                <div class="choices">
+                    <button class="choice" data-c="rock" title="Rock (R)">✊</button>
+                    <button class="choice" data-c="paper" title="Paper (P)">✋</button>
+                    <button class="choice" data-c="scissors" title="Scissors (S)">✌️</button>
+                </div>
+                <div id="result" class="result">Join a room to begin.</div>
+                <div id="scores" class="small muted"></div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
